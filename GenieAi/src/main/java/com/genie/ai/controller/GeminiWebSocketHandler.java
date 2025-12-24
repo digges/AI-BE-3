@@ -1,12 +1,11 @@
 package com.genie.ai.controller;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.genie.ai.entity.Product;
-//import com.genie.ai.repo.ProductRepository;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.socket.TextMessage;
@@ -14,9 +13,9 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
-import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @Component
 public class GeminiWebSocketHandler extends TextWebSocketHandler {
@@ -25,7 +24,7 @@ public class GeminiWebSocketHandler extends TextWebSocketHandler {
     private String apiKey;
 
     private static final String GEMINI_URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=";
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=";
 
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -33,80 +32,73 @@ public class GeminiWebSocketHandler extends TextWebSocketHandler {
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws IOException {
 
-        String userInput = message.getPayload().trim().toLowerCase();
+        String userInput = message.getPayload().trim();
         System.out.println("🔹 User Input: " + userInput);
 
         String response = callGeminiForAnswer(userInput);
         session.sendMessage(new TextMessage(response));
     }
 
-    // ---------------- ECOMMERCE CHECK ----------------
-    private boolean isEcommerceQuery(String userInput) {
-        String[] categories = {"ac", "refrigerator", "fridge", "washing machine", "tv", "television"};
-
-        for (String category : categories) {
-            if (userInput.contains(category) &&
-                    (userInput.contains("under") || userInput.contains("below"))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     // ---------------- GEMINI CALL ----------------
     private String callGeminiForAnswer(String userInput) {
         try {
-            Map<String, Object> payload = Map.of(
-                    "contents", List.of(
-                            Map.of(
-                                    "parts", List.of(
-                                            Map.of("text", userInput)
-                                    )
-                            )
-                    )
-            );
+            // Create request payload
+            Map<String, Object> textPart = new HashMap<>();
+            textPart.put("text", userInput);
+
+            Map<String, Object> parts = new HashMap<>();
+            parts.put("parts", List.of(textPart));
+
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("contents", List.of(parts));
 
             String jsonPayload = objectMapper.writeValueAsString(payload);
+            System.out.println("📤 Sending to Gemini: " + jsonPayload);
 
+            // Set headers
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
 
             HttpEntity<String> entity = new HttpEntity<>(jsonPayload, headers);
 
+            // Call Gemini API
             ResponseEntity<String> response = restTemplate.postForEntity(
                     GEMINI_URL + apiKey,
                     entity,
                     String.class
             );
 
-            // ✅ Return the full Gemini JSON response (not just extracted text)
-            return response.getBody();
+            System.out.println("✅ Gemini Response Status: " + response.getStatusCode());
+            System.out.println("📥 Gemini Response Body: " + response.getBody());
 
-        } catch (HttpClientErrorException e) {
-            // ✅ Return error as JSON
-            System.err.println("❌ Gemini API Error: " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
-            return createErrorJson("Gemini API error: " + e.getStatusCode(), e.getResponseBodyAsString());
+            // ✅ Return the full Gemini JSON response
+            if (response.getBody() != null && !response.getBody().isEmpty()) {
+                return response.getBody();
+            } else {
+                return createErrorJson("Empty response from Gemini", "No data received");
+            }
+
         } catch (Exception e) {
-            // ✅ Return error as JSON
+            // ✅ Handle all errors
+            System.err.println("❌ Error calling Gemini API: " + e.getClass().getName());
+            System.err.println("❌ Error message: " + e.getMessage());
             e.printStackTrace();
-            return createErrorJson("Server error", e.getMessage());
+
+            return createErrorJson("Gemini API error", e.getMessage());
         }
     }
 
     // ✅ Helper method to create error JSON
     private String createErrorJson(String error, String details) {
         try {
-            Map<String, String> errorMap = Map.of(
-                    "error", error,
-                    "details", details != null ? details : "Unknown error"
-            );
+            Map<String, String> errorMap = new HashMap<>();
+            errorMap.put("error", error);
+            errorMap.put("details", details != null ? details : "Unknown error");
+
             return objectMapper.writeValueAsString(errorMap);
         } catch (Exception e) {
-            return "{\"error\":\"Failed to create error response\"}";
+            return "{\"error\":\"Failed to create error response\",\"details\":\"" + e.getMessage() + "\"}";
         }
     }
 
-    // ---------------- RESPONSE PARSER (NOT NEEDED ANYMORE) ----------------
-    // We're now returning the full JSON response from Gemini
-    // Your frontend already handles this format with data.candidates[0].content.parts[0].text
 }
