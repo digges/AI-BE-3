@@ -24,11 +24,8 @@ public class GeminiWebSocketHandler extends TextWebSocketHandler {
     @Value("${gemini.api.key}")
     private String apiKey;
 
-//    @Autowired
-//    private ProductRepository productRepository;
-
     private static final String GEMINI_URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=";
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=";
 
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -39,13 +36,7 @@ public class GeminiWebSocketHandler extends TextWebSocketHandler {
         String userInput = message.getPayload().trim().toLowerCase();
         System.out.println("🔹 User Input: " + userInput);
 
-        String response;
-
-
-
-            response = callGeminiForAnswer(userInput);
-
-
+        String response = callGeminiForAnswer(userInput);
         session.sendMessage(new TextMessage(response));
     }
 
@@ -61,9 +52,6 @@ public class GeminiWebSocketHandler extends TextWebSocketHandler {
         }
         return false;
     }
-
-    // ---------------- ECOMMERCE HANDLER ----------------
-
 
     // ---------------- GEMINI CALL ----------------
     private String callGeminiForAnswer(String userInput) {
@@ -91,23 +79,34 @@ public class GeminiWebSocketHandler extends TextWebSocketHandler {
                     String.class
             );
 
-            return extractGeminiText(response.getBody());
+            // ✅ Return the full Gemini JSON response (not just extracted text)
+            return response.getBody();
 
+        } catch (HttpClientErrorException e) {
+            // ✅ Return error as JSON
+            System.err.println("❌ Gemini API Error: " + e.getStatusCode() + " - " + e.getResponseBodyAsString());
+            return createErrorJson("Gemini API error: " + e.getStatusCode(), e.getResponseBodyAsString());
         } catch (Exception e) {
+            // ✅ Return error as JSON
             e.printStackTrace();
-            return "Gemini API error.";
+            return createErrorJson("Server error", e.getMessage());
         }
     }
 
-    // ---------------- RESPONSE PARSER ----------------
-    private String extractGeminiText(String response) throws IOException {
-        JsonNode root = objectMapper.readTree(response);
-        return root.path("candidates")
-                .get(0)
-                .path("content")
-                .path("parts")
-                .get(0)
-                .path("text")
-                .asText("No response from Gemini");
+    // ✅ Helper method to create error JSON
+    private String createErrorJson(String error, String details) {
+        try {
+            Map<String, String> errorMap = Map.of(
+                    "error", error,
+                    "details", details != null ? details : "Unknown error"
+            );
+            return objectMapper.writeValueAsString(errorMap);
+        } catch (Exception e) {
+            return "{\"error\":\"Failed to create error response\"}";
+        }
     }
+
+    // ---------------- RESPONSE PARSER (NOT NEEDED ANYMORE) ----------------
+    // We're now returning the full JSON response from Gemini
+    // Your frontend already handles this format with data.candidates[0].content.parts[0].text
 }
